@@ -332,6 +332,26 @@ def base_layout(fig: go.Figure, height=420):
     fig.update_xaxes(showgrid=False, linecolor=CARD_BORDER)
     fig.update_yaxes(gridcolor="#EFEDE8", linecolor=CARD_BORDER)
     polish_labels(fig)
+    trim_precision(fig)
+    return fig
+
+
+def trim_precision(fig: go.Figure) -> go.Figure:
+    """Round plotted numbers so charts send far less data to the browser (no visible change)."""
+    import numpy as np
+    for trace in fig.data:
+        for attr in ("x", "y"):
+            values = getattr(trace, attr, None)
+            if values is None:
+                continue
+            arr = np.asarray(values)
+            if arr.dtype.kind != "f":
+                continue
+            finite = arr[np.isfinite(arr)]
+            if finite.size == 0:
+                continue
+            decimals = 0 if np.nanmedian(np.abs(finite)) >= 1000 else 3
+            setattr(trace, attr, np.round(arr, decimals))
     return fig
 
 
@@ -1159,10 +1179,59 @@ def graph_card(graph_id: str):
 
 
 # -----------------------------------------------------------------------------
+# Avocado artwork (inline SVG, no external files)
+# -----------------------------------------------------------------------------
+
+import base64
+
+_LEFT_HALF = "M50 8 C34 8 28 32 24 50 C14 72 16 112 50 114 Z"
+_RIGHT_HALF = "M50 8 C66 8 72 32 76 50 C86 72 84 112 50 114 Z"
+
+
+def _avocado_svg(animated: bool) -> str:
+    style = ""
+    if animated:
+        style = """<style>
+        .l{transform-origin:50px 114px;animation:l 1.4s ease-in-out infinite}
+        .r{transform-origin:50px 114px;animation:r 1.4s ease-in-out infinite}
+        .p{transform-origin:50px 80px;animation:p 1.4s ease-in-out infinite}
+        @keyframes l{0%,100%{transform:none}50%{transform:translateX(-5px) rotate(-7deg)}}
+        @keyframes r{0%,100%{transform:none}50%{transform:translateX(5px) rotate(7deg)}}
+        @keyframes p{0%,100%{transform:none}50%{transform:translateY(-12px) rotate(25deg)}}
+        </style>"""
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 122">' + style +
+        f'<path class="l" d="{_LEFT_HALF}" fill="#D5E59A" stroke="{TYPE_COLORS["conventional"]}" stroke-width="6" stroke-linejoin="round"/>'
+        f'<g class="r"><path d="{_RIGHT_HALF}" fill="#D5E59A" stroke="{TYPE_COLORS["conventional"]}" stroke-width="6" stroke-linejoin="round"/>'
+        f'<circle class="p" cx="50" cy="80" r="15" fill="{TYPE_COLORS["organic"]}"/>'
+        '<circle class="p" cx="45" cy="75" r="4" fill="#FFFFFF" opacity="0.35"/></g></svg>'
+    )
+
+
+def _svg_data_uri(svg: str) -> str:
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+
+
+AVOCADO_ICON = _svg_data_uri(_avocado_svg(animated=False))
+AVOCADO_LOADER = _svg_data_uri(_avocado_svg(animated=True))
+
+
+def avocado_loader():
+    return html.Div(
+        [
+            html.Img(src=AVOCADO_LOADER, alt="", className="avo-loader-img"),
+            html.Div("Slicing avocados…", className="avo-loader-text"),
+        ],
+        className="avo-loader",
+        role="status",
+    )
+
+
+# -----------------------------------------------------------------------------
 # App setup and CSS
 # -----------------------------------------------------------------------------
 
-app = Dash(__name__, suppress_callback_exceptions=True)
+app = Dash(__name__, suppress_callback_exceptions=True, compress=True)
 server = app.server
 app.title = "Avocado Sales Dashboard"
 
@@ -1191,6 +1260,41 @@ body {{
     justify-content: space-between;
     align-items: center;
     gap: 20px;
+}}
+.title-avocado {{
+    width: 26px;
+    height: 32px;
+    margin-right: 10px;
+    vertical-align: -4px;
+}}
+.content-loading {{
+    flex: 1;
+    min-width: 0;
+}}
+.avo-loader {{
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 22px 28px 18px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid {CARD_BORDER};
+    border-radius: 18px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+}}
+.avo-loader-img {{
+    width: 64px;
+    height: 78px;
+}}
+.avo-loader-text {{
+    font-size: 13px;
+    color: {MUTED};
+    letter-spacing: 0.02em;
 }}
 .app-title {{
     margin: 0;
@@ -1393,7 +1497,7 @@ app.index_string = """
     <head>
         {%metas%}
         <title>{%title%}</title>
-        {%favicon%}
+        <link rel="icon" type="image/svg+xml" href="__AVOCADO_ICON__">
         {%css%}
         <style>
 """ + APP_CSS + """
@@ -1409,6 +1513,7 @@ app.index_string = """
     </body>
 </html>
 """
+app.index_string = app.index_string.replace("__AVOCADO_ICON__", AVOCADO_ICON)
 
 app.layout = html.Div(
     [
@@ -1419,7 +1524,10 @@ app.layout = html.Div(
                     [
                         html.Div(
                             [
-                                html.H1("Avocado Sales Dashboard", className="app-title"),
+                                html.H1(
+                                    [html.Img(src=AVOCADO_ICON, alt="", className="title-avocado"), "Avocado Sales Dashboard"],
+                                    className="app-title",
+                                ),
                                 html.P(
                                     "Explore weekly avocado sales, prices, types, and regional market dynamics.",
                                     className="app-subtitle",
@@ -1593,7 +1701,13 @@ app.layout = html.Div(
                         )
                     ],
                 ),
-                html.Div(id="tab-content", className="content"),
+                dcc.Loading(
+                    html.Div(id="tab-content", className="content"),
+                    custom_spinner=avocado_loader(),
+                    delay_show=250,
+                    overlay_style={"visibility": "visible", "opacity": 0.45},
+                    parent_className="content-loading",
+                ),
             ],
             className="main-layout",
         ),
@@ -1752,7 +1866,6 @@ def render_tab(tab):
     Output("kpi-grid", "children"),
     Output("volume-by-type-chart", "figure"),
     Output("price-by-type-chart", "figure"),
-    Input("tabs", "value"),
     Input("primary-period-preset", "value"),
     Input("primary-date-range", "start_date"),
     Input("primary-date-range", "end_date"),
@@ -1766,7 +1879,6 @@ def render_tab(tab):
     Input("region-level", "value"),
 )
 def update_summary(
-    tab,
     primary_preset,
     primary_start,
     primary_end,
@@ -1834,7 +1946,6 @@ def update_summary(
     Output("region-price-chart", "figure"),
     Output("opportunity-map-chart", "figure"),
     Output("type-mix-chart", "figure"),
-    Input("tabs", "value"),
     Input("primary-period-preset", "value"),
     Input("primary-date-range", "start_date"),
     Input("primary-date-range", "end_date"),
@@ -1849,7 +1960,6 @@ def update_summary(
     Input("top-n", "value"),
 )
 def update_regions(
-    tab,
     primary_preset,
     primary_start,
     primary_end,
@@ -1883,7 +1993,6 @@ def update_regions(
     Output("sales-time-chart", "figure"),
     Output("indexed-sales-chart", "figure"),
     Output("sales-region-lines-chart", "figure"),
-    Input("tabs", "value"),
     Input("primary-period-preset", "value"),
     Input("primary-date-range", "start_date"),
     Input("primary-date-range", "end_date"),
@@ -1898,7 +2007,6 @@ def update_regions(
     Input("top-n", "value"),
 )
 def update_sales(
-    tab,
     primary_preset,
     primary_start,
     primary_end,
@@ -1930,7 +2038,6 @@ def update_sales(
     Output("price-time-chart", "figure"),
     Output("indexed-price-chart", "figure"),
     Output("price-region-lines-chart", "figure"),
-    Input("tabs", "value"),
     Input("primary-period-preset", "value"),
     Input("primary-date-range", "start_date"),
     Input("primary-date-range", "end_date"),
@@ -1945,7 +2052,6 @@ def update_sales(
     Input("top-n", "value"),
 )
 def update_prices(
-    tab,
     primary_preset,
     primary_start,
     primary_end,
